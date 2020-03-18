@@ -619,6 +619,7 @@ app.get('/Device/GetDevice/:id', (req, res) => {
                     "name": deviceData['name'],
                     "status": deviceData['status'],
                     "description": deviceData['description'],
+                    "id_user": deviceData['id_user'],
                     "last_update": deviceData['last_update']
                 }
             });
@@ -634,7 +635,7 @@ app.get('/Device/GetDevice/:id', (req, res) => {
 });
 
 // 2.9. Read data using id
-app.get('/data/GetData/:id', (req, res) => {
+app.get('/Data/GetData/:id', (req, res) => {
     const dataRef = db.collection(dataCollections);
     const id = req.params.id;
 
@@ -649,6 +650,7 @@ app.get('/data/GetData/:id', (req, res) => {
                     "id": doc.id,
                     "name": myData['name'],
                     "value": myData['value'],
+                    "id_device": myData['id_device'],
                     "last_update": myData['last_update']
                 }
             });
@@ -726,7 +728,7 @@ app.get('/Dummy/GetUser/:email', (req, res) => {
  * @param value any
  * @param id_device string
  */
-app.post('/Data/SetValue', async (req, res) => {
+app.post('/Data/UpdateValue', async (req, res) => {
     const dataName = req.body['name'];
     const newDataValue = req.body['value'];
     const dataDeviceId = req.body['id_device'];
@@ -734,22 +736,48 @@ app.post('/Data/SetValue', async (req, res) => {
     const dataRef = db.collection(dataCollections);
     const deviceRef = db.collection(deviceCollections);
 
+    // update using data id
     const id = req.body['id'];
     if (id) {
+
+        // update data field
         dataRef.doc(id).update({
             "value": newDataValue,
             "last_update": getNowDate()
-        }).then().catch();
+        }).then(() => {
 
-        res.send({
-            "code": 204,
-            "msg": "success",
-            "success": true,
-            "result": "ok"
+            // update device field for timestamp
+            dataRef.doc(id).get()
+            .then(doc => {
+                const data: any = doc.data();
+                const id_device = data['id_device'];
+
+                deviceRef.doc(id_device).update({
+                    "last_update": getNowDate()
+                }).then().catch();
+            }).catch();
+            
+            res.send({
+                "code": 204,
+                "msg": "success",
+                "success": true,
+                "result": "data value updated"
+            });
+
+        })
+        .catch(err => {
+            res.status(400).send({
+                "code": 400,
+                "msg": "fail to update data, wrong parameters",
+                "success": false,
+                "result": err
+            });
         });
+        
         return;
     }
 
+    // update using device id and data name
     dataRef.where('id_device', '==', dataDeviceId)
         .where('name', '==', dataName).get()
         .then(snapshot => {
@@ -774,7 +802,7 @@ app.post('/Data/SetValue', async (req, res) => {
                 "code": 204,
                 "msg": "success",
                 "success": true,
-                "result": "ok"
+                "result": "data value updated"
             });
         })
         .catch(err => {
@@ -787,11 +815,235 @@ app.post('/Data/SetValue', async (req, res) => {
         });
 });
 
+// 3.2. Update User's data using id
+app.post('/User/UpdateValue', async (req, res) => {
+    const userRef = db.collection(userCollections);
+    const userId = req.body['id'];
+    const newName = req.body['name'];
+    const newEmail = req.body['email'];
+
+    userRef.doc(userId).update({
+        "name": newName,
+        "email": newEmail,
+        "last_update": getNowDate()
+    })
+    .then(() => {
+        res.send({
+            "code": 204,
+            "msg": "success",
+            "success": true,
+            "result": "user data updated"
+        });
+    })
+    .catch(err => {
+        res.status(400).send({
+            "code": 400,
+            "msg": "fail to update user data, wrong parameters",
+            "success": false,
+            "result": err
+        });
+    })
+});
+
+// 3.3. Update User's password (need old and new) using id
+app.post('/User/UpdateValue', async (req, res) => {
+    const userRef = db.collection(userCollections);
+    const userId = req.body['id'];
+    const oldPass = md5Hash(req.body['old_password']);
+    const newPass = md5Hash(req.body['new_password']);
+    
+    userRef.doc(userId).get()
+    .then(result => {
+        const data : any = result.data();
+        const getPass = data['password'];
+
+        if (getPass === oldPass) {
+            userRef.doc(userId).update({
+                "password": newPass,
+                "last_update": getNowDate()
+            })
+            .then(() => {
+                res.send({
+                    "code": 204,
+                    "msg": "success",
+                    "success": true,
+                    "result": "user data updated"
+                });
+            })
+            .catch(err => {
+                res.status(400).send({
+                    "code": 400,
+                    "msg": "fail to update user data, wrong parameters",
+                    "success": false,
+                    "result": err
+                });
+            })
+        }
+        else {
+            res.status(400).send({
+                "code": 400,
+                "msg": "old password not match",
+                "success": false,
+                "result": "please try again"
+            });
+        }
+    })
+    .catch(() => {
+        res.status(400).send({
+            "code": 400,
+            "msg": "failed",
+            "success": false,
+            "result": "failed to get previous data"
+        });
+    });
+});
+
+// 3.4. Update Device's data using id
+app.post('/Device/UpdateValue', async (req, res) => {
+    const deviceRef = db.collection(deviceCollections);
+    
+    const deviceId = req.body['id'];
+    const newName = req.body['name'];
+    const newStatus = req.body['status'];
+    const newDesc = req.body['description'];
+
+    deviceRef.doc(deviceId).update({
+        "name": newName,
+        "status": newStatus,
+        "description": newDesc,
+        "last_update": getNowDate()
+    })
+    .then(() => {
+        res.send({
+            "code": 204,
+            "msg": "success",
+            "success": true,
+            "result": "device data updated"
+        });
+    })
+    .catch(err => {
+        res.status(400).send({
+            "code": 400,
+            "msg": "fail to update device data, wrong parameters",
+            "success": false,
+            "result": err
+        });
+    })
+});
+
+// 3.5. Update Data's data using id (only name)
+app.post('/Data/UpdateName', async (req, res) => {
+    const dataRef = db.collection(dataCollections);
+    
+    const dataId = req.body['id'];
+    const newName = req.body['name'];
+
+    dataRef.doc(dataId).update({
+        "name": newName,
+        "last_update": getNowDate()
+    })
+    .then(() => {
+        res.send({
+            "code": 204,
+            "msg": "success",
+            "success": true,
+            "result": "data name updated"
+        });
+    })
+    .catch(err => {
+        res.status(400).send({
+            "code": 400,
+            "msg": "fail to update data name, wrong parameters",
+            "success": false,
+            "result": err
+        });
+    })
+});
+
 //////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////
 
 // 4. (D)elete
+
+// 4.1. Delete user only
+app.post('/User/Delete', async (req, res) => {
+    const userRef = db.collection(userCollections);
+    const userId = req.body['id'];
+
+    userRef.doc(userId).delete()
+    .then(() => {
+        res.send({
+            "code": 200,
+            "msg": "success",
+            "success": true,
+            "result": "user has been deleted"
+        });
+    })
+    .catch(err => {
+        res.status(400).send({
+            "code": 400,
+            "msg": "failed",
+            "success": false,
+            "result": err
+        });
+    })
+});
+
+// 4.2. Delete user and all devices and datas
+app.post('/User/DeleteWithData', async (req, res) => {
+    const userRef = db.collection(userCollections);
+    const deviceRef = db.collection(deviceCollections);
+    const dataRef = db.collection(dataCollections);
+    
+    const userId = req.body['id'];
+    let deviceId = "";
+    let dataId = "";
+
+    userRef.doc(userId).get()
+    .then(() => {
+        deviceRef.where('id_user', '==', userId).get()
+        .then(result => {
+
+            // get all devices
+            result.forEach(devices => {
+                deviceId = devices.id;
+                dataRef.where('id_device', '==', deviceId).get()
+                .then(result2 => {
+
+                    // get all datas
+                    result2.forEach(datas => {
+                        dataId = datas.id;
+                        dataRef.doc(dataId).delete().then().catch();
+                    });
+
+                }).catch();
+
+                deviceRef.doc(deviceId).delete().then().catch();
+            });
+
+        }).catch();
+
+        userRef.doc(userId).delete()
+        .then(() => {
+            res.send({
+                "code": 200,
+                "msg": "success",
+                "success": true,
+                "result": "user has been deleted"
+            });
+        })
+        .catch();
+    })
+    .catch(err => {
+        res.status(400).send({
+            "code": 400,
+            "msg": "failed",
+            "success": false,
+            "result": err
+        });
+    })
+});
 
 
 //////////////////////////////////////////////////////////////
