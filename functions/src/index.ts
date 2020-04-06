@@ -15,6 +15,7 @@ const main = express();
 const userCollections = 'user';
 const deviceCollections = 'device';
 const dataCollections = 'data';
+const dataLogCollections = 'data_log';
 
 main.use('/api/v1', app);
 main.use(bodyParser.json());
@@ -43,6 +44,11 @@ interface SensorData {
     id_device: string,
     last_update: string
 }
+interface LogData {
+    id_data: string,
+    value: any,
+    timestamp: string
+}
 
 // external functions
 function getNowDate () {
@@ -68,6 +74,58 @@ function addZeroForTwoChar (myChar: string) {
 
 function md5Hash (myString: string) {
     return Md5.hashStr(myString).toString();
+}
+
+function convertToDate (time: any) {
+    // time passed is String, construct into Date format
+    // time example from json: "2019-03-08 16:32:00"
+    // format: YEAR-MONTH-DATEOFMONTH HOUR:MINUTE:SECOND
+
+    // split into DATE form and HOUR form
+    const splitTime = time.split(" ");
+
+    ////////////////////////////////////////////
+    //  DATE PART                             //
+    ////////////////////////////////////////////
+
+    // resultDate = YEAR-MONTH-DATEOFMONTH
+    const resultDate = splitTime[0];
+
+    // split DATE into YEAR, MONTH, and DATEOFMONTH
+    const splitDate = resultDate.split("-");
+
+    const resultYear = splitDate[0];
+    const resultMonth = splitDate[1] - 1;
+    const resultDateOfMonth = splitDate[2];
+
+    ////////////////////////////////////////////
+    //  HOUR PART                             //
+    ////////////////////////////////////////////
+
+    // resultHour = HOUR:MINUTE:SECOND
+    const resultHour = splitTime[1];
+
+    // split HOUR into HOUR, MINUTE, and SECOND
+    const splitHour = resultHour.split(":");
+
+    const resultHourC = splitHour[0];
+    const resultMinute = splitHour[1];
+    const resultSecond = splitHour[2];
+
+    ////////////////////////////////////////////
+    //  CONSTRUCT DATE PART                   //
+    ////////////////////////////////////////////
+
+    // now we get every component to construct date from String
+    return new Date(
+        resultYear,
+        resultMonth,
+        resultDateOfMonth,
+        resultHourC,
+        resultMinute,
+        resultSecond,
+        0
+    );
 }
 
 // CRUD functions
@@ -341,6 +399,7 @@ app.get('/Device/GetAll/:email', (req, res) => {
                             "name": doc.data()['name'],
                             "status": doc.data()['status'],
                             "description": doc.data()['description'],
+                            "id_user": doc.data()['id_user'],
                             "last_update": doc.data()['last_update']
                         }
                         data.push(result);
@@ -373,48 +432,74 @@ app.get('/Device/GetAll/:email', (req, res) => {
 });
 
 // 2.3. Read device (specific) of a user
-app.get('/Device/GetSpecific/:id_device', (req, res) => {
+app.get('/Device/GetSpecific/:email/DeviceName/:name', (req, res) => {
     const deviceRef = db.collection(deviceCollections);
-    const id_device = req.params.id_device;
+    const userRef = db.collection(userCollections);
+    
+    const email = req.params.email;
+    const deviceName = req.params.name;
 
-    deviceRef.get()
+    userRef.where('email', '==', email).get()
         .then(snapshot => {
-            if (snapshot.empty) {
-                res.send({
-                    "code": 404,
-                    "msg": "no data is found",
-                    "success": false,
-                    "result": {}
-                })
-                return;
-            };
-
+            let id_user = "";
+            
             snapshot.forEach(data => {
-                if (data.id === id_device){
-                    const result = {
-                        "id": data.id,
-                        "name": data.data()['name'],
-                        "status": data.data()['status'],
-                        "description": data.data()['description'],
-                        "last_update": data.data()['last_update']
-                    }
-                    res.send({
-                        "code": 200,
-                        "msg": "success",
-                        "success": true,
-                        "result": result
-                    })
-                }
-                return;
+                id_user = data.id;
             });
+
+            deviceRef.where('id_user', '==', id_user).get()
+                .then(snapshot2 => {
+                    
+                    // if no collection found
+                    if (snapshot2.empty) {
+                        res.send({
+                            "code": 404,
+                            "msg": "no device is found",
+                            "success": false,
+                            "result": {}
+                        });
+                        return;
+                    }  
+                
+                    // collection found, get all documents
+                    snapshot2.forEach(doc => {
+                        const docData = doc.data();
+                        if (docData['name'] === deviceName) {
+                            const result = {
+                                "id": doc.id,
+                                "name": docData['name'],
+                                "status": docData['status'],
+                                "description": docData['description'],
+                                "id_user": docData['id_user'],
+                                "last_update": docData['last_update']
+                            }
+                            res.send({
+                                "code": 200,
+                                "msg": "success",
+                                "success": true,
+                                "result": result
+                            });
+                            return;
+                        }
+                    });
+                })
+                .catch(err => {
+                    res.send({
+                        "code": 400,
+                        "msg": "error while getting data",
+                        "success": false,
+                        "result": {}
+                    });
+                });
         })
         .catch(err => {
             res.send({
-                "code": 400,
-                "msg": "error while fetching data",
+                "code": 404,
+                "msg": "no user is found",
                 "success": false,
                 "result": {}
-            })
+            });
+            return;
         })
 });
 
@@ -445,6 +530,7 @@ app.get('/Data/GetAll/:id_device', (req, res) => {
                     "id": doc.id,
                     "name": getData['name'],
                     "value": getData['value'],
+                    "id_device": getData['id_device'],
                     "last_update": getData['last_update']
                 });
             });
@@ -466,8 +552,9 @@ app.get('/Data/GetAll/:id_device', (req, res) => {
 });
 
 // 2.5. Read data (specific) of a device
-app.get('/Data/GetSpecific/:id_device/UseName/:name', (req, res) => {
+app.get('/Data/GetSpecific/:id_device/DataName/:name', (req, res) => {
     const ref = db.collection(dataCollections);
+    
     const id_device = req.params.id_device;
     const name = req.params.name;
 
@@ -498,6 +585,7 @@ app.get('/Data/GetSpecific/:id_device/UseName/:name', (req, res) => {
                             "id": doc.id,
                             "name": tempData['name'],
                             "value": tempData['value'],
+                            "id_device": tempData['id_device'],
                             "last_update": tempData['last_update']
                         });
                     }
@@ -512,6 +600,7 @@ app.get('/Data/GetSpecific/:id_device/UseName/:name', (req, res) => {
                             "id": tempArray[0]['id'],
                             "name": tempArray[0]['name'],
                             "value": tempArray[0]['value'],
+                            "id_device": tempArray[0]['id_device'],
                             "last_update": tempArray[0]['last_update']
                         }
                     });
@@ -722,100 +811,7 @@ app.get('/Dummy/GetUser/:email', (req, res) => {
 
 // 3. (U)pdate
 
-// 3.1. Update data value using id_device and data's name
-/**
- * @param name string
- * @param value any
- * @param id_device string
- */
-app.post('/Data/UpdateValue', async (req, res) => {
-    const dataName = req.body['name'];
-    const newDataValue = req.body['value'];
-    const dataDeviceId = req.body['id_device'];
-    
-    const dataRef = db.collection(dataCollections);
-    const deviceRef = db.collection(deviceCollections);
-
-    // update using data id
-    const id = req.body['id'];
-    if (id) {
-
-        // update data field
-        dataRef.doc(id).update({
-            "value": newDataValue,
-            "last_update": getNowDate()
-        }).then(() => {
-
-            // update device field for timestamp
-            dataRef.doc(id).get()
-            .then(doc => {
-                const data: any = doc.data();
-                const id_device = data['id_device'];
-
-                deviceRef.doc(id_device).update({
-                    "last_update": getNowDate()
-                }).then().catch();
-            }).catch();
-            
-            res.send({
-                "code": 204,
-                "msg": "success",
-                "success": true,
-                "result": "data value updated"
-            });
-
-        })
-        .catch(err => {
-            res.status(400).send({
-                "code": 400,
-                "msg": "fail to update data, wrong parameters",
-                "success": false,
-                "result": err
-            });
-        });
-        
-        return;
-    }
-
-    // update using device id and data name
-    dataRef.where('id_device', '==', dataDeviceId)
-        .where('name', '==', dataName).get()
-        .then(snapshot => {
-            let dataId = "";
-
-            snapshot.forEach(doc => {
-                dataId = doc.id;
-            });
-
-            // update data value and timestamp
-            dataRef.doc(dataId).update({
-                "value": newDataValue,
-                "last_update": getNowDate()
-            }).then().catch();
-
-            // update device timestamp
-            deviceRef.doc(dataDeviceId).update({
-                "last_update": getNowDate()
-            }).then().catch();
-
-            res.send({
-                "code": 204,
-                "msg": "success",
-                "success": true,
-                "result": "data value updated"
-            });
-        })
-        .catch(err => {
-            res.status(400).send({
-                "code": 400,
-                "msg": "fail to update data, wrong parameters",
-                "success": false,
-                "result": err
-            });
-        });
-});
-
-// 3.2. Update User's data using id
+// 3.1. Update User's data using id
 app.post('/User/UpdateValue', async (req, res) => {
     const userRef = db.collection(userCollections);
     const userId = req.body['id'];
@@ -845,8 +841,8 @@ app.post('/User/UpdateValue', async (req, res) => {
     })
 });
 
-// 3.3. Update User's password (need old and new) using id
-app.post('/User/UpdateValue', async (req, res) => {
+// 3.2. Update User's password (need old and new) using id
+app.post('/User/ChangePassword', async (req, res) => {
     const userRef = db.collection(userCollections);
     const userId = req.body['id'];
     const oldPass = md5Hash(req.body['old_password']);
@@ -898,7 +894,7 @@ app.post('/User/UpdateValue', async (req, res) => {
     });
 });
 
-// 3.4. Update Device's data using id
+// 3.3. Update Device's data using id
 app.post('/Device/UpdateValue', async (req, res) => {
     const deviceRef = db.collection(deviceCollections);
     
@@ -929,6 +925,147 @@ app.post('/Device/UpdateValue', async (req, res) => {
             "result": err
         });
     })
+});
+
+// 3.4. Update data value using id_device and data's name
+/**
+ * @param name string
+ * @param value any
+ * @param id_device string
+ */
+app.post('/Data/UpdateValue', async (req, res) => { 
+    const dataName = req.body['name'];
+    const newDataValue = req.body['value'];
+    const dataDeviceId = req.body['id_device'];
+    
+    const dataRef = db.collection(dataCollections);
+    const deviceRef = db.collection(deviceCollections);
+    const logRef = db.collection(dataLogCollections);
+
+    // update using data id
+    const id = req.body['id'];
+    if (id) {
+
+// ///////////////////////////////// logging system /////////////////////////////////
+//         let oldData: any;
+//         dataRef.doc(id).get().then(doc => {
+//             oldData = doc.data();
+            
+//             const logRef = db.collection(dataLogCollections);
+//             const logDataInput : LogData = {
+//                 "id_data": id,
+//                 "value": oldData['value'],
+//                 "timestamp": oldData['last_update']
+//             }
+//             logRef.add(logDataInput).then().catch();
+//         }).catch();        
+// //////////////////////////////////////////////////////////////////////////////////
+
+        // update data field
+        dataRef.doc(id).update({
+            "value": newDataValue,
+            "last_update": getNowDate()
+        }).then(() => {
+
+            // update device field for timestamp
+            dataRef.doc(id).get()
+            .then(doc => {
+                const data: any = doc.data();
+                const id_device = data['id_device'];
+
+                deviceRef.doc(id_device).update({
+                    "last_update": getNowDate()
+                }).then().catch();
+            }).catch();
+
+        }).then(() => {
+            
+            // add new data to logging database
+            const logDataInput : LogData = {
+                "id_data": id,
+                "value": newDataValue,
+                "timestamp": getNowDate()
+            };
+            logRef.add(logDataInput).then().catch();
+
+            res.send({
+                "code": 204,
+                "msg": "success",
+                "success": true,
+                "result": "data value updated"
+            });
+
+        }).catch(err => {
+            res.status(400).send({
+                "code": 400,
+                "msg": "fail to update data, wrong parameters",
+                "success": false,
+                "result": err
+            });
+        });
+        
+        return;
+    }
+
+    // update using device id and data name
+    dataRef.where('id_device', '==', dataDeviceId)
+        .where('name', '==', dataName).get()
+        .then(snapshot => {
+            let dataId = "";
+
+            snapshot.forEach(doc => {
+                dataId = doc.id;
+            });
+
+// ///////////////////////////////// logging system /////////////////////////////////
+//             let oldData: any;
+//             dataRef.doc(dataId).get().then(doc => {
+//                 oldData = doc.data();
+                
+//                 const logRef = db.collection(dataLogCollections);
+//                 const logDataInput : LogData = {
+//                     "id_data": dataId,
+//                     "value": oldData['value'],
+//                     "timestamp": oldData['last_update']
+//                 }
+//                 logRef.add(logDataInput).then().catch();
+//             }).catch();        
+// //////////////////////////////////////////////////////////////////////////////////
+
+            // update data value and timestamp
+            dataRef.doc(dataId).update({
+                "value": newDataValue,
+                "last_update": getNowDate()
+            }).then().catch();
+
+            // update device timestamp
+            deviceRef.doc(dataDeviceId).update({
+                "last_update": getNowDate()
+            }).then().catch();
+
+            // add new data to logging database
+            const logDataInput : LogData = {
+                "id_data": dataId,
+                "value": newDataValue,
+                "timestamp": getNowDate()
+            };
+            logRef.add(logDataInput).then().catch();
+
+            res.send({
+                "code": 204,
+                "msg": "success",
+                "success": true,
+                "result": "data value updated"
+            });
+        })
+        .catch(err => {
+            res.status(400).send({
+                "code": 400,
+                "msg": "fail to update data, wrong parameters",
+                "success": false,
+                "result": err
+            });
+        });
 });
 
 // 3.5. Update Data's data using id (only name)
@@ -1045,6 +1182,54 @@ app.post('/User/DeleteWithData', async (req, res) => {
     })
 });
 
+// 4.3. Delete a device
+app.post('/Device/Delete', async (req, res) => {
+    const deviceRef = db.collection(deviceCollections);
+    const deviceId = req.body['id'];
+
+    deviceRef.doc(deviceId).delete()
+    .then(() => {
+        res.send({
+            "code": 200,
+            "msg": "success",
+            "success": true,
+            "result": "device has been deleted"
+        });
+    })
+    .catch(err => {
+        res.status(400).send({
+            "code": 400,
+            "msg": "failed",
+            "success": false,
+            "result": err
+        });
+    })
+});
+
+// 4.1. Delete a data (a sensor of a device)
+app.post('/Data/Delete', async (req, res) => {
+    const dataRef = db.collection(dataCollections);
+    const dataId = req.body['id'];
+
+    dataRef.doc(dataId).delete()
+    .then(() => {
+        res.send({
+            "code": 200,
+            "msg": "success",
+            "success": true,
+            "result": "sensor/data has been deleted"
+        });
+    })
+    .catch(err => {
+        res.status(400).send({
+            "code": 400,
+            "msg": "failed",
+            "success": false,
+            "result": err
+        });
+    })
+});
+
 
 //////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////
@@ -1081,15 +1266,22 @@ app.post('/User/Login', async (req, res) => {
                     return;
                 }
 
+                let userId = "";
+
                 // correct email and password
                 snapshot.forEach(doc => {
-                    res.send({
-                        "code": 200,
-                        "msg": "success",
-                        "success": true,
-                        "result": "ok"
-                    });
-                    return;
+                    userId = doc.id;
+
+                    userRef.doc(userId).update({
+                        "last_login": getNowDate()
+                    }).then(() => {
+                        res.send({
+                            "code": 200,
+                            "msg": "success",
+                            "success": true,
+                            "result": "ok"
+                        });
+                    }).catch();
                 })
             })
             .catch(err => {
@@ -1108,6 +1300,184 @@ app.post('/User/Login', async (req, res) => {
             "result": {}
         });
     }
+});
+
+// 5.2. Check session login
+app.post('/User/CheckSessionLogin', (req, res) => {
+    const userRef = db.collection(userCollections);
+    const id = req.body['id'];
+
+    let last_login = "";
+    const now_login = getNowDate();
+
+    userRef.doc(id).get()
+        .then(doc => {
+            const userData: any = doc.data();
+            last_login = userData['last_login'];
+
+            if (last_login === "") {
+                res.send({
+                    "status": false
+                });
+                return;
+            }
+
+            // session login timeout time = 1 hours = 60 mins = 3600 secs = 3600000 milisecs.
+            const SESSION_TIMEOUT = 3600000;
+            const last_login_time = convertToDate(last_login).getTime();
+            const now_login_time = convertToDate(now_login).getTime();
+            const diff_time = now_login_time - last_login_time;
+
+            if (diff_time > SESSION_TIMEOUT) {
+                res.send({
+                    "status": false
+                });
+            } else {
+                res.send({
+                    "status": true
+                });
+                
+                // update last login time
+                userRef.doc(id).update({
+                    "last_login": getNowDate()
+                }).then().catch();
+            }
+        })
+        .catch(err => {
+            res.send({
+                "status": null,
+                "msg": err
+            });
+        })
+})
+
+// 5.3. Logout user
+app.post('/User/Logout', async (req, res) => {
+    const userId = req.body['id'];
+    const userRef = db.collection(userCollections);
+    
+    try {        
+        userRef.doc(userId).get()
+            .then(snapshot => {
+                const userData: any = snapshot.data();
+                const last_login = userData['last_login'];
+
+                if (last_login === "") {
+                    res.send({
+                        "code": 400,
+                        "msg": "failed",
+                        "success": false,
+                        "result": "User hasn't logged in"
+                    });
+                    return;
+                }
+
+                // delete last login time
+                userRef.doc(userId).update({
+                    "last_login": ""
+                })
+                .then(() => {
+                    res.send({
+                        "code": 200,
+                        "msg": "success",
+                        "success": true,
+                        "result": "ok"
+                    });
+                }).catch();
+            })
+            .catch(err => {
+                res.send({
+                    "code": 400,
+                    "msg": "failed",
+                    "success": false,
+                    "result": "Wrong parameters"
+                });
+        });
+    } catch (error) {
+        res.send({
+            "code": 400,
+            "msg": "error while getting data",
+            "success": false,
+            "result": {}
+        });
+    }
+});
+
+// 5.4. Update session login
+app.post('/User/UpdateSessionLogin', async (req, res) => {
+    const userId = req.body['id'];
+    const userRef = db.collection(userCollections);
+
+    userRef.doc(userId).update({
+        "last_login": getNowDate()
+    }).then(() => {
+        res.send({
+            "code": 200,
+            "msg": "success",
+            "success": true,
+            "result": "ok"
+        });
+    }).catch(err => {
+        res.send({
+            "code": 400,
+            "msg": "failed",
+            "success": false,
+            "result": "Cannot update user session login"
+        });
+    });
+});
+
+
+//////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////
+
+// 6. Logging
+
+// 6.1. Get log data
+app.get('/Log/:id_data', (req, res) => {
+    const logRef = db.collection(dataLogCollections);
+    const id_data = req.params.id_data;
+
+    logRef.where('id_data', '==', id_data).get()
+        .then(snapshot => {
+            const data: FirebaseFirestore.DocumentData[] = [];
+
+            // if no collection found
+            if (snapshot.empty) {
+                res.send({
+                    "code": 404,
+                    "msg": "no log data is found",
+                    "success": false,
+                    "result": []
+                });
+                return;
+            }  
+        
+            // collection found, get all documents
+            snapshot.forEach(doc => {
+                const getData = doc.data();
+                data.push({
+                    "value": getData['value'],
+                    "timestamp": convertToDate(getData['timestamp'])
+                });
+            });
+            res.send({
+                "code": 200,
+                "msg": "success",
+                "success": true,
+                "id_data": id_data,
+                "result": data
+            });
+        })
+        .catch(err => {
+            res.send({
+                "code": 400,
+                "msg": "error while fetching log data",
+                "success": false,
+                "result": []
+            });
+        });
 });
 
 export { app };
