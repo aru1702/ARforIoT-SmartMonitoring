@@ -660,6 +660,45 @@ app.get('/User/GetId/:email', (req, res) => {
             });
         })
 });
+app.post('/User/GetIdv2', async (req, res) => {
+    const userRef = db.collection(userCollections);
+    const email = req.body['email'];
+
+    userRef.where('email', '==', email).get()
+        .then(snapshot => {
+
+            // if no collection found
+            if (snapshot.empty) {
+                res.send({
+                    "code": 404,
+                    "msg": "no user is found",
+                    "success": false,
+                    "result": {}
+                });
+                return;
+            }  
+        
+            // collection found, get all documents
+            snapshot.forEach(doc => {
+                const tempData = doc.id;
+                res.send({
+                    "code": 200,
+                    "msg": "success",
+                    "success": true,
+                    "result": {"id": tempData}
+                });
+                return;
+            });
+        })
+        .catch(err => {
+            res.send({
+                "code": 400,
+                "msg": "error while getting data",
+                "success": false,
+                "result": []
+            });
+        })
+});
 
 // 2.7. Read user using id
 app.get('/User/GetUser/:id', (req, res) => {
